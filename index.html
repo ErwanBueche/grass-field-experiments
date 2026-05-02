@@ -11,195 +11,299 @@
     #info {
       position: fixed; top: 12px; left: 12px;
       font: 12px/1.6 Consolas, monospace;
-      color: rgba(255,255,255,0.55);
-      background: rgba(0,0,0,0.35);
+      color: rgba(255,255,255,0.6);
+      background: rgba(0,0,0,0.3);
       padding: 8px 12px; border-radius: 6px;
       pointer-events: none; user-select: none; z-index: 10;
     }
-    #info .fps { font-weight: bold; }
   </style>
 </head>
 <body>
-  <div id="info">
-    <span class="fps">-- FPS</span> &middot; BOTW Grass
-  </div>
+  <div id="info"><span id="fps">--</span> FPS &middot; BOTW Grass</div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
-    // ============================================================
-    //  BOTW-style Grass Field
-    //  Single BufferGeometry, MeshLambertMaterial + vertex colors
-    // ============================================================
+// ── Perlin Noise ──────────────────────────────────────────────
+// Simple 2D Perlin noise for natural grass color variation
+function PerlinNoise(seed) {
+  const perm = new Uint8Array(512);
+  const p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  // Shuffle with seed
+  let s = seed;
+  for (let i = 255; i > 0; i--) {
+    s = (s * 16807 + 0) % 2147483647;
+    const j = s % (i + 1);
+    [p[i], p[j]] = [p[j], p[i]];
+  }
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
 
-    const BLADE_COUNT = 120000;
-    const FIELD_SIZE = 50;
-    const BLADE_HEIGHT = 0.9;
+  function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+  function lerp(a, b, t) { return a + t * (b - a); }
+  function grad(hash, x, y) {
+    const h = hash & 3;
+    const u = h < 2 ? x : y;
+    const v = h < 2 ? y : x;
+    return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+  }
 
-    // ---- Scene ----
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x7EC8E3);
-
-    // ---- Camera — angled view looking down ----
-    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
-    camera.position.set(0, 35, 40);
-    camera.lookAt(0, 0, 0);
-
-    // ---- Renderer ----
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
-
-    // ---- Lighting (BOTW-style soft) ----
-    const ambient = new THREE.AmbientLight(0x7799CC, 0.45);
-    scene.add(ambient);
-
-    const sun = new THREE.DirectionalLight(0xFFEECC, 1.2);
-    sun.position.set(30, 50, 20);
-    scene.add(sun);
-
-    const fill = new THREE.DirectionalLight(0x88CCFF, 0.3);
-    fill.position.set(-20, 30, -30);
-    scene.add(fill);
-
-    // ---- Square ground ----
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(FIELD_SIZE + 4, FIELD_SIZE + 4),
-      new THREE.MeshLambertMaterial({ color: 0x4a7c3f, side: THREE.DoubleSide })
+  this.noise = function(x, y) {
+    const X = Math.floor(x) & 255;
+    const Y = Math.floor(y) & 255;
+    const xf = x - Math.floor(x);
+    const yf = y - Math.floor(y);
+    const u = fade(xf);
+    const v = fade(yf);
+    const aa = perm[perm[X] + Y];
+    const ab = perm[perm[X] + Y + 1];
+    const ba = perm[perm[X + 1] + Y];
+    const bb = perm[perm[X + 1] + Y + 1];
+    return lerp(
+      lerp(grad(aa, xf, yf), grad(ba, xf - 1, yf), u),
+      lerp(grad(ab, xf, yf - 1), grad(bb, xf - 1, yf - 1), u),
+      v
     );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.05;
-    scene.add(ground);
+  };
+}
 
-    // ---- Grass geometry ----
-    console.log('Building', BLADE_COUNT, 'blades...');
+// ── Config ────────────────────────────────────────────────────
+const BLADE_COUNT = 200000;
+const FIELD_SIZE = 50;
+const BLADE_HEIGHT = 0.85;
 
-    const baseW = 0.035;
-    const topW = 0.007;
-    const halfBase = baseW / 2;
-    const halfTop = topW / 2;
+// ── Three.js Setup ────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x7EC8E3);
 
-    const vertsPerBlade = 6; // 2 triangles, non-indexed
-    const totalVerts = BLADE_COUNT * vertsPerBlade;
+// Camera: closer, less inclined angle
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(0, 8, 20);
+camera.lookAt(0, 0, 0);
 
-    const positions = new Float32Array(totalVerts * 3);
-    const colors = new Float32Array(totalVerts * 3);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
 
-    // BOTW-style grass palette: vibrant greens
-    // Base greens in HSL
-    function grassColor() {
-      const hue = 105 + Math.random() * 35;    // 105-140
-      const sat = 0.55 + Math.random() * 0.25;  // 0.55-0.80
-      const lum = 0.32 + Math.random() * 0.18;  // 0.32-0.50
-      return { hue, sat, lum };
-    }
+// ── Lighting (soft BOTW-style) ────────────────────────────────
+const ambient = new THREE.AmbientLight(0x7799CC, 0.5);
+scene.add(ambient);
 
-    // Triangle vertex order: BL, BR, TR, BL, TR, TL
-    const triOrder = [0, 1, 2, 0, 2, 3];
+const sun = new THREE.DirectionalLight(0xFFEECC, 1.1);
+sun.position.set(30, 40, 20);
+scene.add(sun);
 
-    for (let i = 0; i < BLADE_COUNT; i++) {
-      const x = (Math.random() - 0.5) * FIELD_SIZE;
-      const z = (Math.random() - 0.5) * FIELD_SIZE;
-      const yaw = Math.random() * Math.PI * 2;
-      const cosY = Math.cos(yaw);
-      const sinY = Math.sin(yaw);
-      const h = BLADE_HEIGHT * (0.65 + Math.random() * 0.70);
+const fill = new THREE.DirectionalLight(0x88DDFF, 0.3);
+fill.position.set(-15, 25, -25);
+scene.add(fill);
 
-      const c = grassColor();
-      // Convert HSL to RGB
-      const hh = c.hue / 360;
-      const ss = c.sat;
-      const ll = c.lum;
-      const cval = (1 - Math.abs(2 * ll - 1)) * ss;
-      const xval = cval * (1 - Math.abs((hh * 6) % 2 - 1));
-      const m = ll - cval / 2;
-      let r, g, b;
-      if (hh < 1/6) { r = cval; g = xval; b = 0; }
-      else if (hh < 2/6) { r = xval; g = cval; b = 0; }
-      else if (hh < 3/6) { r = 0; g = cval; b = xval; }
-      else if (hh < 4/6) { r = 0; g = xval; b = cval; }
-      else if (hh < 5/6) { r = xval; g = 0; b = cval; }
-      else { r = cval; g = 0; b = xval; }
+// ── Ground ────────────────────────────────────────────────────
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(FIELD_SIZE + 6, FIELD_SIZE + 6),
+  new THREE.MeshStandardMaterial({
+    color: 0x3d6b35,
+    roughness: 1,
+    metalness: 0,
+  })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.05;
+scene.add(ground);
 
-      // 4 local blade corners
-      const verts = [
-        [-halfBase, 0],  // BL
-        [ halfBase, 0],  // BR
-        [ halfTop,  h],  // TR
-        [-halfTop,  h],  // TL
-      ];
+// ── Build Grass Geometry ──────────────────────────────────────
+console.log('Building', BLADE_COUNT, 'blades...');
 
-      const base = i * vertsPerBlade * 3;
+const baseW = 0.03;
+const topW = 0.006;
+const halfBase = baseW / 2;
+const halfTop = topW / 2;
 
-      for (let j = 0; j < 6; j++) {
-        const vi = triOrder[j];
-        const [lx, ly] = verts[vi];
+const vertsPerBlade = 6;
+const totalVerts = BLADE_COUNT * vertsPerBlade;
 
-        // Rotate width (lx) around Y axis, add to base position
-        const wx = x + lx * cosY;
-        const wz = z + lx * sinY;
+const posArr = new Float32Array(totalVerts * 3);
+const colArr = new Float32Array(totalVerts * 3);
+const windArr = new Float32Array(totalVerts);  // wind phase per vertex
+const noise = new PerlinNoise(42);
+const triOrder = [0, 1, 2, 0, 2, 3];
 
-        const idx = base + j * 3;
-        positions[idx]     = wx;
-        positions[idx + 1] = ly;
-        positions[idx + 2] = wz;
+// Loop for speed: 200k iterations
+for (let i = 0; i < BLADE_COUNT; i++) {
+  const x = (Math.random() - 0.5) * FIELD_SIZE;
+  const z = (Math.random() - 0.5) * FIELD_SIZE;
+  const yaw = Math.random() * Math.PI * 2;
+  const cosY = Math.cos(yaw);
+  const sinY = Math.sin(yaw);
+  const h = BLADE_HEIGHT * (0.6 + Math.random() * 0.8);
 
-        colors[idx]     = r + m;
-        colors[idx + 1] = g + m;
-        colors[idx + 2] = b + m;
-      }
-    }
+  // Perlin noise for natural color patches
+  const n = noise.noise(x * 0.08, z * 0.08); // [-1, 1]
+  const hue = 115 + n * 10 + Math.random() * 15;     // ~105-140
+  const sat = 0.55 + n * 0.08 + Math.random() * 0.15; // 0.5-0.78
+  const lum = 0.35 + n * 0.06 + Math.random() * 0.12; // 0.3-0.53
+  const hh = hue / 360;
+  const ss = sat;
+  const ll = lum;
+  const cv = (1 - Math.abs(2 * ll - 1)) * ss;
+  const xv = cv * (1 - Math.abs((hh * 6) % 2 - 1));
+  const m = ll - cv / 2;
+  let r, g, b;
+  if (hh < 1/6) { r = cv; g = xv; b = 0; }
+  else if (hh < 2/6) { r = xv; g = cv; b = 0; }
+  else if (hh < 3/6) { r = 0; g = cv; b = xv; }
+  else if (hh < 4/6) { r = 0; g = xv; b = cv; }
+  else if (hh < 5/6) { r = xv; g = 0; b = cv; }
+  else { r = cv; g = 0; b = xv; }
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const cols = [r + m, g + m, b + m];
+  const windPhase = Math.random();
 
-    const material = new THREE.MeshLambertMaterial({
-      vertexColors: THREE.VertexColors,
-      side: THREE.DoubleSide,
-    });
+  // 4 local corners
+  const verts = [[-halfBase, 0], [halfBase, 0], [halfTop, h], [-halfTop, h]];
+  const base = i * vertsPerBlade;
 
-    const grassMesh = new THREE.Mesh(geometry, material);
-    grassMesh.frustumCulled = false;
-    scene.add(grassMesh);
+  for (let j = 0; j < 6; j++) {
+    const vi = triOrder[j];
+    const [lx, ly] = verts[vi];
+    const wx = x + lx * cosY;
+    const wz = z + lx * sinY;
+    const pIdx = (base + j) * 3;
+    posArr[pIdx]     = wx;
+    posArr[pIdx + 1] = ly;
+    posArr[pIdx + 2] = wz;
+    colArr[pIdx]     = cols[0];
+    colArr[pIdx + 1] = cols[1];
+    colArr[pIdx + 2] = cols[2];
+    windArr[base + j] = windPhase;
+  }
+}
 
-    console.log('Added', BLADE_COUNT, 'blades');
+// ── Vertex Shader (BOTW-style wind) ────────────────────────────
+const vertexShader = `
+  attribute float aWindPhase;
+  uniform float uTime;
+  uniform float uWindStrength;
+  uniform float uMaxBladeHeight;
 
-    // ---- Fog for depth (like BOTW) ----
-    scene.fog = new THREE.Fog(0x7EC8E3, 30, 70);
+  varying vec3 vColor;
+  varying float vHeight;
 
-    // ---- Animation ----
-    const fpsEl = document.querySelector('#info .fps');
-    let fpsCount = 0;
-    let fpsTime = 0;
-    let last = performance.now();
+  void main() {
+    vec3 pos = position;
+    float h = pos.y / uMaxBladeHeight; // normalized 0-1, clamped
 
-    function animate() {
-      const now = performance.now();
-      const delta = (now - last) / 1000;
-      last = now;
+    // BOTW-style wind: sine waves that travel across the field
+    // Low frequency waves = gentle swaying
+    float speed = 1.4;
+    float waveFreq = 0.08; // wide waves
+    float detailFreq = 0.25;
 
-      renderer.render(scene, camera);
+    // Main wind wave (primary direction X)
+    float wind1 = sin(uTime * speed + pos.x * waveFreq + pos.z * waveFreq * 0.6 + aWindPhase * 6.2832);
+    // Secondary wave for natural variation
+    float wind2 = sin(uTime * speed * 0.7 + pos.x * detailFreq + pos.z * detailFreq * 0.4 + aWindPhase * 12.566);
 
-      fpsCount++;
-      fpsTime += delta;
-      if (fpsTime >= 1.0) {
-        if (fpsEl) fpsEl.textContent = fpsCount + ' FPS';
-        fpsCount = 0;
-        fpsTime = 0;
-      }
+    float windStrength = (wind1 * 0.7 + wind2 * 0.3) * uWindStrength * h * h;
 
-      requestAnimationFrame(animate);
-    }
+    // BOTW wind bends blades mainly in X direction with slight Z component
+    pos.x += windStrength * 0.7;
+    pos.z += windStrength * 0.3;
 
-    animate();
+    vec4 mvPos = modelViewMatrix * vec4(pos, 1.0);
+    gl_Position = projectionMatrix * mvPos;
 
-    // ---- Resize ----
-    window.addEventListener('resize', function() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+    vColor = color;
+    vHeight = clamp(h, 0.0, 1.0);
+  }
+`;
+
+// ── Fragment Shader (stylized lighting, no shadows on grass) ───
+const fragmentShader = `
+  varying vec3 vColor;
+  varying float vHeight;
+
+  void main() {
+    // BOTW-style tip gradient: darker at base, lighter/yellower at tip
+    vec3 baseCol = vColor * 0.55;
+    vec3 tipCol = vec3(
+      min(vColor.r * 1.6, 1.0),
+      min(vColor.g * 1.35, 1.0),
+      max(vColor.b * 0.75, 0.0)
+    );
+    vec3 bladeColor = mix(baseCol, tipCol, pow(vHeight, 1.4));
+
+    // Soft stylized lighting (no self-shadows)
+    vec3 lightDir = normalize(vec3(0.35, 0.7, 0.25));
+    float NdotL = max(dot(vec3(0.0, 0.0, 1.0), lightDir), 0.0);
+    float ambient = 0.35;
+    float lighting = ambient + (1.0 - ambient) * NdotL;
+
+    // Subtle subsurface glow (backlit)
+    float back = max(dot(vec3(0.0, 0.0, -1.0), lightDir), 0.0) * 0.12 * vHeight;
+    lighting += back;
+
+    gl_FragColor = vec4(bladeColor * lighting, 1.0);
+  }
+`;
+
+// ── Create Mesh ────────────────────────────────────────────────
+const geometry = new THREE.BufferGeometry();
+geometry.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+geometry.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
+geometry.setAttribute('aWindPhase', new THREE.BufferAttribute(windArr, 1));
+
+const material = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 0 },
+    uWindStrength: { value: 0.35 },
+    uMaxBladeHeight: { value: BLADE_HEIGHT * 1.4 }, // max possible blade height
+  },
+  vertexShader,
+  fragmentShader,
+  side: THREE.DoubleSide,
+});
+
+const grassMesh = new THREE.Mesh(geometry, material);
+grassMesh.frustumCulled = false;
+scene.add(grassMesh);
+
+console.log('Done:', BLADE_COUNT, 'blades');
+
+// ── Fog ────────────────────────────────────────────────────────
+scene.fog = new THREE.Fog(0x7EC8E3, 25, 65);
+
+// ── Animation Loop ──────────────────────────────────────────────
+const fpsEl = document.getElementById('fps');
+let fc = 0, ft = 0, prev = performance.now();
+
+function animate() {
+  const now = performance.now();
+  const dt = (now - prev) / 1000;
+  prev = now;
+
+  material.uniforms.uTime.value += dt;
+
+  renderer.render(scene, camera);
+
+  fc++;
+  ft += dt;
+  if (ft >= 1.0) {
+    if (fpsEl) fpsEl.textContent = fc;
+    fc = 0;
+    ft = 0;
+  }
+
+  requestAnimationFrame(animate);
+}
+
+animate();
+
+// ── Resize ──────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
   </script>
 </body>
 </html>
