@@ -1,36 +1,33 @@
 import * as THREE from 'three';
 
 const vertexShader = `
+  attribute vec3 color;
+  attribute vec2 windData;
+
   uniform float uTime;
   uniform float uWindStrength;
-  uniform float uWindFrequency;
-
-  attribute float instanceRandomOffset;
-  attribute float instanceHeightScale;
-  attribute vec3 instanceColor;
 
   varying vec3 vColor;
   varying float vHeight;
 
   void main() {
-    // Scale blade height
+    float windPhase = windData.x;
+    float heightScale = windData.y;
+
     vec3 pos = position;
-    pos.y *= instanceHeightScale;
+    float h = pos.y / heightScale; // normalized 0-1
 
-    // Wind displacement — more bend at the tip (pos.y)
-    float windX = sin(uTime * 1.5 + pos.x * uWindFrequency + instanceRandomOffset * 6.2832) * uWindStrength * pos.y;
-    float windZ = cos(uTime * 1.2 + pos.z * uWindFrequency * 0.7 + instanceRandomOffset * 6.2832) * uWindStrength * 0.6 * pos.y;
+    // Wind displacement — more at the tip
+    float windX = sin(uTime * 1.5 + pos.x * 0.5 + windPhase * 6.2832) * uWindStrength * h;
+    float windZ = cos(uTime * 1.2 + pos.z * 0.35 + windPhase * 6.2832) * uWindStrength * 0.6 * h;
+    pos.x += windX;
+    pos.z += windZ;
 
-    vec3 windOffset = vec3(windX, 0.0, windZ);
-    vec3 displacedPos = pos + windOffset;
+    vec4 mvPos = modelViewMatrix * vec4(pos, 1.0);
+    gl_Position = projectionMatrix * mvPos;
 
-    // Use instanceMatrix for the base position + rotation, instanceMatrix includes rotation so wind applies in local space
-    vec4 worldPos = instanceMatrix * vec4(displacedPos, 1.0);
-    vec4 mvPosition = viewMatrix * worldPos;
-    gl_Position = projectionMatrix * mvPosition;
-
-    vColor = instanceColor;
-    vHeight = pos.y / instanceHeightScale; // normalized 0-1
+    vColor = color;
+    vHeight = h;
   }
 `;
 
@@ -39,19 +36,24 @@ const fragmentShader = `
   varying float vHeight;
 
   void main() {
-    // Tip coloring: darker base to lighter/yellower tip
+    // Genshin/Zelda stylized grass: darker base, vibrant tips
     vec3 darkBase = vColor * 0.5;
     vec3 lightTip = vec3(
       min(vColor.r * 1.5, 1.0),
       min(vColor.g * 1.3, 1.0),
       max(vColor.b * 0.8, 0.0)
     );
-    vec3 baseColor = mix(darkBase, lightTip, pow(vHeight, 0.8));
+    vec3 baseColor = mix(darkBase, lightTip, pow(vHeight, 1.2));
 
-    // Simple lighting: ambient + directional
+    // Cel-shaded inspired lighting
     vec3 lightDir = normalize(vec3(0.5, 0.8, 0.3));
-    float diff = max(dot(normalize(vec3(0.0, 0.0, 1.0)), lightDir), 0.0);
-    float lighting = 0.35 + 0.65 * diff;
+    float NdotL = max(dot(vec3(0.0, 0.0, 1.0), lightDir), 0.0);
+    // Soft stylized lighting
+    float lighting = 0.4 + 0.6 * NdotL;
+
+    // Subtle subsurface scattering approximation (backlit glow)
+    float backLight = max(dot(vec3(0.0, 0.0, -1.0), lightDir), 0.0) * 0.15;
+    lighting += backLight * vHeight;
 
     vec3 finalColor = baseColor * lighting;
 
@@ -76,117 +78,129 @@ function hslToRgb(h, s, l) {
 
 class GrassField {
   constructor(options = {}) {
-    this.count = options.count ?? 50000;
+    this.count = options.count ?? 100000;
     this.areaSize = options.areaSize ?? 50;
     this.bladeHeight = options.bladeHeight ?? 0.8;
-    this.windStrength = options.windStrength ?? 0.3;
-    this.windFrequency = options.windFrequency ?? 0.5;
+    this.windStrength = options.windStrength ?? 0.4;
 
-    this._createBladeGeometry();
-    this._createInstancedMesh();
+    this._buildGeometry();
+    this._createMaterial();
+    this._createMesh();
   }
 
-  _createBladeGeometry() {
-    const baseWidth = 0.04;   // wider for better visibility
+  _buildGeometry() {
+    const count = this.count;
+    const areaSize = this.areaSize;
+    const bladeHeight = this.bladeHeight;
+
+    const baseWidth = 0.04;
     const topWidth = 0.008;
-    const height = 1.0;
     const halfBase = baseWidth / 2;
     const halfTop = topWidth / 2;
 
-    const positions = new Float32Array([
-      -halfBase, 0.0, 0.0,  // 0: bottom-left
-       halfBase, 0.0, 0.0,  // 1: bottom-right
-       halfTop,  height, 0.0, // 2: top-right
-      -halfTop,  height, 0.0, // 3: top-left
-    ]);
+    // 6 vertices per blade (2 triangles, non-indexed)
+    const vertCount = count * 6;
 
-    const indices = [
-      0, 1, 2,
-      0, 2, 3,
-    ];
+    const positions = new Float32Array(vertCount * 3);
+    const colors = new Float32Array(vertCount * 3);
+    const normals = new Float32Array(vertCount * 3);
+    const windData = new Float32Array(vertCount * 2);
 
-    // We'll handle normals in the shader — simpler and less error-prone
-    const normals = new Float32Array([
-      0, 0, 1,
-      0, 0, 1,
-      0, 0, 1,
-      0, 0, 1,
-    ]);
+    const BL = 0, BR = 1, TR = 2, TL = 3;
+    // Triangle 1: BL, BR, TR
+    // Triangle 2: BL, TR, TL
+    const triOrder = [BL, BR, TR, BL, TR, TL];
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    geometry.setIndex(indices);
+    for (let i = 0; i < count; i++) {
+      // Random position in 50x50 area
+      const x = (Math.random() - 0.5) * areaSize;
+      const z = (Math.random() - 0.5) * areaSize;
 
-    this.geometry = geometry;
-  }
+      // Random Y rotation so blades face all directions
+      const yaw = Math.random() * Math.PI * 2;
+      const cosY = Math.cos(yaw);
+      const sinY = Math.sin(yaw);
 
-  _createInstancedMesh() {
-    const instancePositions = new Float32Array(this.count * 3);
-    const instanceRandomOffsets = new Float32Array(this.count);
-    const instanceHeightScales = new Float32Array(this.count);
-    const instanceColors = new Float32Array(this.count * 3);
+      // Height variation
+      const heightMul = 0.7 + Math.random() * 0.6;
+      const h = bladeHeight * heightMul;
 
-    const dummy = new THREE.Object3D();
-    const meshes = [];
+      // Wind phase
+      const windPhase = Math.random();
 
-    for (let i = 0; i < this.count; i++) {
-      const i3 = i * 3;
-      const x = (Math.random() - 0.5) * this.areaSize;
-      const z = (Math.random() - 0.5) * this.areaSize;
-
-      instancePositions[i3]     = x;
-      instancePositions[i3 + 1] = 0.0;
-      instancePositions[i3 + 2] = z;
-
-      instanceRandomOffsets[i] = Math.random();
-      instanceHeightScales[i] = 0.7 + Math.random() * 0.6; // [0.7, 1.3]
-
-      const hue = 100 + Math.random() * 40;        // 100-140
-      const sat = 0.4 + Math.random() * 0.3;       // 0.4-0.7
-      const lum = 0.3 + Math.random() * 0.2;       // 0.3-0.5
+      // Vibrant grass color — stylized Genshin/Zelda style
+      const hue = 110 + Math.random() * 30;        // 110-140 (greens)
+      const sat = 0.5 + Math.random() * 0.3;        // 0.5-0.8
+      const lum = 0.35 + Math.random() * 0.2;       // 0.35-0.55
       const [r, g, b] = hslToRgb(hue, sat, lum);
-      instanceColors[i3]     = r;
-      instanceColors[i3 + 1] = g;
-      instanceColors[i3 + 2] = b;
 
-      // Store per-instance data for matrix setup
-      meshes.push({ x, z, randomYaw: Math.random() * Math.PI * 2 });
+      // 4 local blade vertices (in XY plane, Z=0)
+      const lVerts = [
+        [-halfBase, 0.0],   // BL
+        [ halfBase, 0.0],   // BR
+        [ halfTop,  h],     // TR
+        [-halfTop,  h],     // TL
+      ];
+
+      // Normal: blade faces perpendicular to its width
+      // In local space: (0, 0, 1), rotated around Y by yaw
+      const nx = sinY;
+      const nz = cosY;
+
+      const base = i * 6 * 3; // base index in float arrays
+      const windBase = i * 6 * 2;
+
+      for (let j = 0; j < 6; j++) {
+        const vi = triOrder[j];
+        const [lx, ly] = lVerts[vi];
+
+        // Rotate the width component around Y, then add base position
+        const wx = x + lx * cosY;
+        const wz = z + lx * sinY;
+
+        const pIdx = base + j * 3;
+        positions[pIdx]     = wx;
+        positions[pIdx + 1] = ly;
+        positions[pIdx + 2] = wz;
+
+        const cIdx = base + j * 3;
+        colors[cIdx]     = r;
+        colors[cIdx + 1] = g;
+        colors[cIdx + 2] = b;
+
+        const nIdx = base + j * 3;
+        normals[nIdx]     = nx;
+        normals[nIdx + 1] = 0;
+        normals[nIdx + 2] = nz;
+
+        const wIdx = windBase + j * 2;
+        windData[wIdx]     = windPhase;
+        windData[wIdx + 1] = heightMul;
+      }
     }
 
-    // Add custom instanced attributes to the geometry
-    this.geometry.setAttribute('instanceRandomOffset', new THREE.InstancedBufferAttribute(instanceRandomOffsets, 1));
-    this.geometry.setAttribute('instanceHeightScale', new THREE.InstancedBufferAttribute(instanceHeightScales, 1));
-    this.geometry.setAttribute('instanceColor', new THREE.InstancedBufferAttribute(instanceColors, 3));
+    this.geometry = new THREE.BufferGeometry();
+    this.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    this.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    this.geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    this.geometry.setAttribute('windData', new THREE.Float32BufferAttribute(windData, 2));
+  }
 
-    // Create material
+  _createMaterial() {
     this.material = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
         uWindStrength: { value: this.windStrength },
-        uWindFrequency: { value: this.windFrequency },
       },
       vertexShader,
       fragmentShader,
       side: THREE.DoubleSide,
     });
+  }
 
-    // Create InstancedMesh — the canonical Three.js way
-    const mesh = new THREE.InstancedMesh(this.geometry, this.material, this.count);
-    mesh.frustumCulled = false;
-
-    // Set instance matrices with position + random yaw rotation
-    for (let i = 0; i < this.count; i++) {
-      const m = meshes[i];
-      dummy.position.set(m.x, 0, m.z);
-      dummy.rotation.set(0, m.randomYaw, 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-
-    this.mesh = mesh;
+  _createMesh() {
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.mesh.frustumCulled = false;
   }
 
   updateTime(time) {
@@ -195,10 +209,6 @@ class GrassField {
 
   setWindStrength(value) {
     this.material.uniforms.uWindStrength.value = value;
-  }
-
-  setWindFrequency(value) {
-    this.material.uniforms.uWindFrequency.value = value;
   }
 
   dispose() {
