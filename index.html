@@ -1,81 +1,201 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Grass Field Test</title>
+  <title>BOTW Grass Field</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; }
     canvas { display: block; }
+    #info {
+      position: fixed; top: 12px; left: 12px;
+      font: 12px/1.6 Consolas, monospace;
+      color: rgba(255,255,255,0.55);
+      background: rgba(0,0,0,0.35);
+      padding: 8px 12px; border-radius: 6px;
+      pointer-events: none; user-select: none; z-index: 10;
+    }
+    #info .fps { font-weight: bold; }
   </style>
 </head>
 <body>
+  <div id="info">
+    <span class="fps">-- FPS</span> &middot; BOTW Grass
+  </div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x222244);
+    // ============================================================
+    //  BOTW-style Grass Field
+    //  Single BufferGeometry, MeshLambertMaterial + vertex colors
+    // ============================================================
 
-    // Camera that can actually see things
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 10, 20);
+    const BLADE_COUNT = 120000;
+    const FIELD_SIZE = 50;
+    const BLADE_HEIGHT = 0.9;
+
+    // ---- Scene ----
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x7EC8E3);
+
+    // ---- Camera — angled view looking down ----
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
+    camera.position.set(0, 35, 40);
     camera.lookAt(0, 0, 0);
 
+    // ---- Renderer ----
     const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    // ---- A big visible square ground ----
+    // ---- Lighting (BOTW-style soft) ----
+    const ambient = new THREE.AmbientLight(0x7799CC, 0.45);
+    scene.add(ambient);
+
+    const sun = new THREE.DirectionalLight(0xFFEECC, 1.2);
+    sun.position.set(30, 50, 20);
+    scene.add(sun);
+
+    const fill = new THREE.DirectionalLight(0x88CCFF, 0.3);
+    fill.position.set(-20, 30, -30);
+    scene.add(fill);
+
+    // ---- Square ground ----
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(10, 10),
-      new THREE.MeshBasicMaterial({ color: 0x44aa44, side: THREE.DoubleSide })
+      new THREE.PlaneGeometry(FIELD_SIZE + 4, FIELD_SIZE + 4),
+      new THREE.MeshLambertMaterial({ color: 0x4a7c3f, side: THREE.DoubleSide })
     );
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.1;
+    ground.position.y = -0.05;
     scene.add(ground);
 
-    // ---- 50 colored test rectangles scattered around ----
-    for (let i = 0; i < 50; i++) {
-      const w = 0.5 + Math.random() * 0.5;
-      const h = 1.0 + Math.random() * 1.5;
-      const x = (Math.random() - 0.5) * 8;
-      const z = (Math.random() - 0.5) * 8;
-      const color = new THREE.Color().setHSL(Math.random(), 0.8, 0.5);
+    // ---- Grass geometry ----
+    console.log('Building', BLADE_COUNT, 'blades...');
 
-      const mesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(w, h),
-        new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide })
-      );
-      mesh.position.set(x, h / 2, z);
-      mesh.rotation.y = Math.random() * Math.PI * 2;
-      scene.add(mesh);
+    const baseW = 0.035;
+    const topW = 0.007;
+    const halfBase = baseW / 2;
+    const halfTop = topW / 2;
 
-      // Add a small sphere at the base for visibility
-      const sphere = new THREE.Mesh(
-        new THREE.SphereGeometry(0.1, 8, 8),
-        new THREE.MeshBasicMaterial({ color: 0xff0000 })
-      );
-      sphere.position.set(x, 0, z);
-      scene.add(sphere);
+    const vertsPerBlade = 6; // 2 triangles, non-indexed
+    const totalVerts = BLADE_COUNT * vertsPerBlade;
+
+    const positions = new Float32Array(totalVerts * 3);
+    const colors = new Float32Array(totalVerts * 3);
+
+    // BOTW-style grass palette: vibrant greens
+    // Base greens in HSL
+    function grassColor() {
+      const hue = 105 + Math.random() * 35;    // 105-140
+      const sat = 0.55 + Math.random() * 0.25;  // 0.55-0.80
+      const lum = 0.32 + Math.random() * 0.18;  // 0.32-0.50
+      return { hue, sat, lum };
     }
 
-    // ---- Grid helper ----
-    const grid = new THREE.GridHelper(10, 10, 0xffffff, 0x666666);
-    scene.add(grid);
+    // Triangle vertex order: BL, BR, TR, BL, TR, TL
+    const triOrder = [0, 1, 2, 0, 2, 3];
 
-    // ---- Axes helper ----
-    const axes = new THREE.AxesHelper(5);
-    scene.add(axes);
+    for (let i = 0; i < BLADE_COUNT; i++) {
+      const x = (Math.random() - 0.5) * FIELD_SIZE;
+      const z = (Math.random() - 0.5) * FIELD_SIZE;
+      const yaw = Math.random() * Math.PI * 2;
+      const cosY = Math.cos(yaw);
+      const sinY = Math.sin(yaw);
+      const h = BLADE_HEIGHT * (0.65 + Math.random() * 0.70);
 
-    console.log('Scene ready:', scene.children.length, 'objects');
+      const c = grassColor();
+      // Convert HSL to RGB
+      const hh = c.hue / 360;
+      const ss = c.sat;
+      const ll = c.lum;
+      const cval = (1 - Math.abs(2 * ll - 1)) * ss;
+      const xval = cval * (1 - Math.abs((hh * 6) % 2 - 1));
+      const m = ll - cval / 2;
+      let r, g, b;
+      if (hh < 1/6) { r = cval; g = xval; b = 0; }
+      else if (hh < 2/6) { r = xval; g = cval; b = 0; }
+      else if (hh < 3/6) { r = 0; g = cval; b = xval; }
+      else if (hh < 4/6) { r = 0; g = xval; b = cval; }
+      else if (hh < 5/6) { r = xval; g = 0; b = cval; }
+      else { r = cval; g = 0; b = xval; }
+
+      // 4 local blade corners
+      const verts = [
+        [-halfBase, 0],  // BL
+        [ halfBase, 0],  // BR
+        [ halfTop,  h],  // TR
+        [-halfTop,  h],  // TL
+      ];
+
+      const base = i * vertsPerBlade * 3;
+
+      for (let j = 0; j < 6; j++) {
+        const vi = triOrder[j];
+        const [lx, ly] = verts[vi];
+
+        // Rotate width (lx) around Y axis, add to base position
+        const wx = x + lx * cosY;
+        const wz = z + lx * sinY;
+
+        const idx = base + j * 3;
+        positions[idx]     = wx;
+        positions[idx + 1] = ly;
+        positions[idx + 2] = wz;
+
+        colors[idx]     = r + m;
+        colors[idx + 1] = g + m;
+        colors[idx + 2] = b + m;
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const material = new THREE.MeshLambertMaterial({
+      vertexColors: THREE.VertexColors,
+      side: THREE.DoubleSide,
+    });
+
+    const grassMesh = new THREE.Mesh(geometry, material);
+    grassMesh.frustumCulled = false;
+    scene.add(grassMesh);
+
+    console.log('Added', BLADE_COUNT, 'blades');
+
+    // ---- Fog for depth (like BOTW) ----
+    scene.fog = new THREE.Fog(0x7EC8E3, 30, 70);
+
+    // ---- Animation ----
+    const fpsEl = document.querySelector('#info .fps');
+    let fpsCount = 0;
+    let fpsTime = 0;
+    let last = performance.now();
 
     function animate() {
+      const now = performance.now();
+      const delta = (now - last) / 1000;
+      last = now;
+
       renderer.render(scene, camera);
+
+      fpsCount++;
+      fpsTime += delta;
+      if (fpsTime >= 1.0) {
+        if (fpsEl) fpsEl.textContent = fpsCount + ' FPS';
+        fpsCount = 0;
+        fpsTime = 0;
+      }
+
       requestAnimationFrame(animate);
     }
+
     animate();
 
-    window.addEventListener('resize', () => {
+    // ---- Resize ----
+    window.addEventListener('resize', function() {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
