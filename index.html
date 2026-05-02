@@ -131,7 +131,6 @@ const vertSrc = `
   attribute float windPhase;
   uniform float uTime;
   varying vec3 vColor;
-  varying float vNormH;
 
   void main() {
     vec3 p = position;
@@ -180,7 +179,6 @@ const vertSrc = `
     gl_Position = projectionMatrix * mv;
 
     vColor = color;
-    vNormH = h;
   }
 `;
 
