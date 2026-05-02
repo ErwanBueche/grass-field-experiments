@@ -1,223 +1,135 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>BOTW Grass Field</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; }
-    canvas { display: block; }
-    #info {
-      position: fixed; top: 12px; left: 12px;
-      font: 12px/1.6 Consolas, monospace; color: rgba(255,255,255,0.6);
-      background: rgba(0,0,0,0.3); padding: 8px 12px; border-radius: 6px;
-      pointer-events: none; user-select: none; z-index: 10;
-    }
-  </style>
+  <style>*{margin:0;padding:0;box-sizing:border-box}body{background:#000;overflow:hidden}canvas{display:block}#info{position:fixed;top:12px;left:12px;font:12px/1.6 Consolas,monospace;color:rgba(255,255,255,0.6);background:rgba(0,0,0,0.3);padding:8px 12px;border-radius:6px;pointer-events:none;user-select:none;z-index:10}</style>
 </head>
 <body>
-  <div id="info"><span id="fps">--</span> FPS &middot; BOTW Grass</div>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script>
+<div id="info"><span id="fps">--</span> FPS &middot; BOTW Grass</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
 // ── Perlin Noise ──────────────────────────────────────────────
-function PerlinNoise(seed) {
-  const P = new Uint8Array(512), p = new Uint8Array(256);
-  for (let i = 0; i < 256; i++) p[i] = i;
-  let s = seed;
-  for (let i = 255; i > 0; i--) { s = (s * 16807) % 2147483647; const j = s % (i + 1); [p[i], p[j]] = [p[j], p[i]]; }
-  for (let i = 0; i < 512; i++) P[i] = p[i & 255];
-  function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
-  function lerp(a, b, t) { return a + t * (b - a); }
-  function grad(h, x, y) { const hh = h & 3; const u = hh < 2 ? x : y, v = hh < 2 ? y : x; return ((hh & 1) === 0 ? u : -u) + ((hh & 2) === 0 ? v : -v); }
-  this.n = function(x, y) {
-    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
-    const xf = x - Math.floor(x), yf = y - Math.floor(y);
-    const u = fade(xf), v = fade(yf);
-    return lerp(lerp(grad(P[P[X] + Y], xf, yf), grad(P[P[X] + 1 + Y], xf - 1, yf), u), lerp(grad(P[P[X] + Y + 1], xf, yf - 1), grad(P[P[X] + 1 + Y + 1], xf - 1, yf - 1), u), v);
-  };
-  this.fbm = function(x, y) { let v = 0, a = 0.5, f = 1; for (let i = 0; i < 3; i++) { v += a * this.n(x * f, y * f); f *= 2; a *= 0.5; } return v; };
+function Perlin(seed) {
+  const P=new Uint8Array(512),p=new Uint8Array(256);
+  for(let i=0;i<256;i++)p[i]=i;
+  let s=seed;
+  for(let i=255;i>0;i--){s=(s*16807)%2147483647;const j=s%(i+1);[p[i],p[j]]=[p[j],p[i]]}
+  for(let i=0;i<512;i++)P[i]=p[i&255];
+  function f(t){return t*t*t*(t*(t*6-15)+10)}
+  function l(a,b,t){return a+t*(b-a)}
+  function g(h,x,y){const hh=h&3,u=hh<2?x:y,v=hh<2?y:x;return((hh&1)==0?u:-u)+((hh&2)==0?v:-v)}
+  this.n=function(x,y){const X=Math.floor(x)&255,Y=Math.floor(y)&255,xf=x-Math.floor(x),yf=y-Math.floor(y),u=f(xf),v=f(yf);return l(l(g(P[P[X]+Y],xf,yf),g(P[P[X]+1+Y],xf-1,yf),u),l(g(P[P[X]+Y+1],xf,yf-1),g(P[P[X]+1+Y+1],xf-1,yf-1),u),v)}
 }
-
-function botwColor(nv) {
-  const hue = 95 + nv * 8, sat = 0.25 + nv * 0.04, lum = 0.38 + nv * 0.07;
-  const hh = hue / 360, s = sat, l = lum;
-  const cv = (1 - Math.abs(2 * l - 1)) * s;
-  const xv = cv * (1 - Math.abs((hh * 6) % 2 - 1));
-  const m = l - cv / 2;
-  let r, g, b;
-  if (hh < 1/6) { r = cv; g = xv; b = 0; }
-  else if (hh < 2/6) { r = xv; g = cv; b = 0; }
-  else if (hh < 3/6) { r = 0; g = cv; b = xv; }
-  else if (hh < 4/6) { r = 0; g = xv; b = cv; }
-  else if (hh < 5/6) { r = xv; g = 0; b = cv; }
-  else { r = cv; g = 0; b = xv; }
-  return [r + m, g + m, b + m];
+function botwCol(nv){
+  const hue=95+nv*8,sat=0.25+nv*0.04,lum=0.38+nv*0.07,hh=hue/360,s=sat,l=lum,cv=(1-Math.abs(2*l-1))*s,xv=cv*(1-Math.abs((hh*6)%2-1)),m=l-cv/2;
+  if(hh<1/6)return [cv+m,xv+m,m]
+  if(hh<2/6)return [xv+m,cv+m,m]
+  if(hh<3/6)return [m,cv+m,xv+m]
+  if(hh<4/6)return [m,xv+m,cv+m]
+  if(hh<5/6)return [xv+m,m,cv+m]
+  return [cv+m,m,xv+m]
 }
 
 // ── Config ────────────────────────────────────────────────────
-const BLADE_COUNT = 200000;
-const FIELD_SIZE = 50;
-const BLADE_HEIGHT = 0.55;
-const BASE_WIDTH = 0.06;
-const TOP_WIDTH = 0.003;
+const COUNT=50000,FIELD=50,HEIGHT=0.55,BW=0.06,TW=0.003;
+const hb=BW/2,ht=TW/2,V=6,N=COUNT*V;
 
 // ── Scene ────────────────────────────────────────────────────
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x7EC8E3);
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 500);
-camera.position.set(0, 8, 25);
-camera.lookAt(0, 0, 0);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
+const sc=new THREE.Scene();sc.background=new THREE.Color(0x7EC8E3);
+const ca=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.1,500);
+ca.position.set(0,8,25);ca.lookAt(0,0,0);
+const re=new THREE.WebGLRenderer({antialias:true});
+re.setPixelRatio(Math.min(devicePixelRatio,2));
+re.setSize(innerWidth,innerHeight);document.body.appendChild(re.domElement);
 
-// ── Ground (solid color, no vertex colors) ────────────────────
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(FIELD_SIZE + 6, FIELD_SIZE + 6),
-  new THREE.MeshBasicMaterial({ color: 0x5a7a47, side: THREE.DoubleSide })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.position.y = -0.05;
-scene.add(ground);
+// ── Ground ────────────────────────────────────────────────────
+const gd=new THREE.Mesh(new THREE.PlaneGeometry(FIELD+6,FIELD+6),new THREE.MeshBasicMaterial({color:0x5a7a47,side:THREE.DoubleSide}));
+gd.rotation.x=-Math.PI/2;gd.position.y=-0.05;sc.add(gd);
 
 // ── Build Grass ──────────────────────────────────────────────
-console.log('Building', BLADE_COUNT, 'blades...');
-const hb = BASE_WIDTH / 2, ht = TOP_WIDTH / 2;
-const V = 6, N = BLADE_COUNT * V;
-const pos = new Float32Array(N * 3);
-const col = new Float32Array(N * 3);
-const to = [0, 1, 2, 0, 2, 3];
+const noise=new Perlin(137);
+const pos=new Float32Array(N*3);
+const col=new Float32Array(N*3);
+// Store original XZ for wind computation
+const baseX=new Float32Array(N);
+const baseZ=new Float32Array(N);
+const hArr=new Float32Array(N);
+const phaseArr=new Float32Array(N);
+const to=[0,1,2,0,2,3];
+let idx=0;
 
-// Store per-blade base XZ for wind phase
-const windPhaseArr = new Float32Array(N);
-
-for (let i = 0; i < BLADE_COUNT; i++) {
-  const x = (Math.random() - 0.5) * FIELD_SIZE;
-  const z = (Math.random() - 0.5) * FIELD_SIZE;
-  const yaw = Math.random() * Math.PI * 2;
-  const cy = Math.cos(yaw), sy = Math.sin(yaw);
-  const h = BLADE_HEIGHT * (0.7 + Math.random() * 0.5);
-  const nv = noise.fbm(x * 0.06, z * 0.06);
-  const baseRGB = botwColor(nv);
-  const tipRGB = [Math.min(baseRGB[0] * 1.25, 1), Math.min(baseRGB[1] * 1.2, 1), baseRGB[2] * 0.85];
-  const windPhase = Math.random();
-  const windPhase2 = Math.random();
-
-  const verts = [[-hb, 0], [hb, 0], [ht, h], [-ht, h]];
-  const bi = i * V;
-  for (let j = 0; j < 6; j++) {
-    const vi = to[j], [lx, ly] = verts[vi];
-    const wx = x + lx * cy, wz = z + lx * sy;
-    const pi = (bi + j) * 3;
-    pos[pi] = wx; pos[pi+1] = ly; pos[pi+2] = wz;
-    const t = ly / h;
-    col[pi] = baseRGB[0]; col[pi+1] = baseRGB[1]; col[pi+2] = baseRGB[2];
-    windPhaseArr[bi + j] = windPhase + windPhase2 * 0.3;
+for(let i=0;i<COUNT;i++){
+  const x=(Math.random()-0.5)*FIELD,z=(Math.random()-0.5)*FIELD;
+  const yaw=Math.random()*Math.PI*2,cy=Math.cos(yaw),sy=Math.sin(yaw);
+  const h=HEIGHT*(0.7+Math.random()*0.5);
+  const nv=noise.n(x*0.08,z*0.08);
+  const [r,g,b]=botwCol(nv);
+  const phase=Math.random();
+  const verts=[[-hb,0],[hb,0],[ht,h],[-ht,h]];
+  for(let j=0;j<6;j++){
+    const vi=to[j],[lx,ly]=verts[vi];
+    const wx=x+lx*cy,wz=z+lx*sy;
+    const pi=idx*3;
+    pos[pi]=wx;pos[pi+1]=ly;pos[pi+2]=wz;
+    col[pi]=r;col[pi+1]=g;col[pi+2]=b;
+    baseX[idx]=wx;baseZ[idx]=wz;hArr[idx]=h;phaseArr[idx]=phase;
+    idx++;
   }
 }
 
-const geo = new THREE.BufferGeometry();
-geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-geo.setAttribute('windPhase', new THREE.BufferAttribute(windPhaseArr, 1));
+const geo=new THREE.BufferGeometry();
+geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+geo.setAttribute('color',new THREE.BufferAttribute(col,3));
 
-// ── Vertex Shader — improved BOTW wind ────────────────────────
-// Technique: traveling gust waves + turbulence + spring-like recovery
-const vertSrc = `
-  attribute vec3 color;
-  attribute float windPhase;
-  uniform float uTime;
-  varying vec3 vColor;
+// Store a copy of original positions for wind displacement
+const origPos=new Float32Array(pos);
 
-  void main() {
-    vec3 p = position;
-    float h = clamp(p.y / 0.8, 0.0, 1.0);
+const mat=new THREE.MeshBasicMaterial({vertexColors:THREE.VertexColors,side:THREE.DoubleSide});
+const mesh=new THREE.Mesh(geo,mat);
+mesh.frustumCulled=false;
+sc.add(mesh);
 
-    // ── Traveling gust system ─────────────────────────────────
-    // The gust moves across the field in a direction (gustDir)
-    // As it passes, blades bend, then recover naturally.
-
-    // Primary gust: travels in +X direction
-    float gustSpeed = 1.3;
-    float gustTravel = uTime * gustSpeed - p.x * 0.06 - p.z * 0.03;
-    float gustEnv = sin(gustTravel + windPhase * 1.5) * 0.5 + 0.5; // 0-1 pulse
-    gustEnv = gustEnv * gustEnv; // Sharper pulse, like a gust hitting
-
-    // Secondary gust: slower, different direction
-    float gustTravel2 = uTime * 0.7 - p.x * 0.02 + p.z * 0.05;
-    float gustEnv2 = sin(gustTravel2 + windPhase * 2.3) * 0.5 + 0.5;
-    gustEnv2 = gustEnv2 * gustEnv2;
-
-    // Combine gusts with different strengths
-    float gust = gustEnv * 0.7 + gustEnv2 * 0.3;
-
-    // ── Turbulence (high-freq detail on top of gusts) ─────────
-    float turb = sin(uTime * 2.1 + p.x * 0.5 + p.z * 0.4 + windPhase * 4.0) * 0.12;
-    float turb2 = sin(uTime * 3.7 + p.x * 0.9 + p.z * 0.7 + windPhase * 7.0) * 0.06;
-
-    // ── Wind strength with slow modulation ────────────────────
-    // Creates calmer and windier moments
-    float windIntensity = 0.35 * (0.6 + 0.4 * sin(uTime * 0.2 + p.x * 0.01));
-
-    // ── Combine ───────────────────────────────────────────────
-    float wind = (gust + turb + turb2) * windIntensity * h * h;
-
-    // ── Wind direction (slightly varies across field) ─────────
-    // Primary direction is +X, slight variation in Z
-    float dirVariation = sin(p.x * 0.03 + p.z * 0.02 + windPhase * 2.0) * 0.2;
-    float dirX = 0.85;
-    float dirZ = 0.15 + dirVariation;
-
-    vec3 disp = p;
-    disp.x += wind * dirX;
-    disp.z += wind * dirZ;
-
-    vec4 mv = modelViewMatrix * vec4(disp, 1.0);
-    gl_Position = projectionMatrix * mv;
-
-    vColor = color;
+// ── Wind update on CPU ────────────────────────────────────────
+let time=0;
+function updateWind(dt){
+  time+=dt;
+  const t=time;
+  for(let i=0;i<N;i++){
+    const i3=i*3;
+    const bx=baseX[i],bz=baseZ[i],ph=phaseArr[i],hh=hArr[i];
+    const hNorm=hh/0.8;
+    // Traveling gust
+    const gust=Math.sin(t*1.3-bx*0.06-bz*0.03+ph*1.5)*0.5+0.5;
+    const gust2=Math.sin(t*0.7-bx*0.02+bz*0.05+ph*2.3)*0.5+0.5;
+    const gustE=gust*gust*0.7+gust2*gust2*0.3;
+    const turb=Math.sin(t*2.1+bx*0.5+bz*0.4+ph*4.0)*0.12;
+    const intensity=0.35*(0.6+0.4*Math.sin(t*0.2));
+    const wind=(gustE+turb)*intensity*hNorm*hNorm;
+    const dirVar=Math.sin(bx*0.03+bz*0.02+ph*2.0)*0.2;
+    pos[i3]=origPos[i3]+wind*0.85;
+    pos[i3+1]=origPos[i3+1];
+    pos[i3+2]=origPos[i3+2]+wind*(0.15+dirVar);
   }
-`;
+  geo.attributes.position.needsUpdate=true;
+}
 
-const fragSrc = `
-  varying vec3 vColor;
-  void main() {
-    gl_FragColor = vec4(vColor, 1.0);
-  }
-`;
+// ── Fog ────────────────────────────────────────────────────────
+sc.fog=new THREE.Fog(0x7EC8E3,30,75);
 
-const mat = new THREE.ShaderMaterial({
-  uniforms: { uTime: { value: 0 } },
-  vertexShader: vertSrc,
-  fragmentShader: fragSrc,
-  side: THREE.DoubleSide,
-});
-
-const mesh = new THREE.Mesh(geo, mat);
-mesh.frustumCulled = false;
-scene.add(mesh);
-console.log('Done:', BLADE_COUNT, 'blades');
-
-scene.fog = new THREE.Fog(0x7EC8E3, 30, 75);
-
-const fpsEl = document.getElementById('fps');
-let fc = 0, ft = 0, prev = performance.now();
-function tick() {
-  const now = performance.now(); const dt = (now - prev) / 1000; prev = now;
-  mat.uniforms.uTime.value += dt;
-  renderer.render(scene, camera); fc++;
-  if (ft >= 1.0) { if (fpsEl) fpsEl.textContent = fc; fc = 0; ft = 0; }
-  requestAnimationFrame(tick);
+// ── Loop ──────────────────────────────────────────────────────
+const fpsEl=document.getElementById('fps');
+let fc=0,ft=0,prev=performance.now();
+function tick(){
+  const now=performance.now(),dt=(now-prev)/1000;prev=now;
+  updateWind(dt);
+  re.render(sc,ca);fc++;ft+=dt;
+  if(ft>=1.0){if(fpsEl)fpsEl.textContent=fc;fc=0;ft=0}
+  requestAnimationFrame(tick)
 }
 tick();
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-  </script>
+addEventListener('resize',()=>{ca.aspect=innerWidth/innerHeight;ca.updateProjectionMatrix();re.setSize(innerWidth,innerHeight)});
+</script>
 </body>
 </html>
