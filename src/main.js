@@ -8,7 +8,7 @@ scene.background = new THREE.Color(0x87CEEB);
 
 // --- Camera ---
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 12, 20);
+camera.position.set(5, 8, 15);
 camera.lookAt(0, 0, 0);
 
 // --- Renderer ---
@@ -40,7 +40,7 @@ const hemisphereLight = new THREE.HemisphereLight(0x87CEEB, 0x3a7d44, 0.4);
 scene.add(hemisphereLight);
 
 // --- Ground ---
-const groundGeometry = new THREE.CircleGeometry(25, 32);
+const groundGeometry = new THREE.CircleGeometry(35, 32);
 groundGeometry.rotateX(-Math.PI / 2);
 const groundMaterial = new THREE.MeshStandardMaterial({
   color: 0x2d5a27,
@@ -54,12 +54,11 @@ scene.add(ground);
 
 // --- GrassField ---
 const grassField = new GrassField({
-  count: 80000,
-  areaSize: 40,
+  count: 100000,
+  areaSize: 50,
   bladeHeight: 0.8,
-  windStrength: 0.3,
-  windFrequency: 0.5,
-  density: 0.85,
+  windStrength: 0.4,
+  windFrequency: 0.6,
 });
 scene.add(grassField.mesh);
 

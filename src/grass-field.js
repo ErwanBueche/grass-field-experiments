@@ -1,44 +1,32 @@
 import * as THREE from 'three';
 
 const vertexShader = `
-  attribute vec3 instancePosition;
-  attribute float instanceRandomOffset;
-  attribute float instanceHeightScale;
-  attribute vec3 instanceColor;
-
   uniform float uTime;
   uniform float uWindStrength;
   uniform float uWindFrequency;
 
+  attribute float instanceRandomOffset;
+  attribute float instanceHeightScale;
+  attribute vec3 instanceColor;
+
   varying vec3 vColor;
   varying float vHeight;
-  varying vec3 vNormal;
 
   void main() {
     // Scale blade height
     vec3 pos = position;
     pos.y *= instanceHeightScale;
 
-    // Wind displacement
+    // Wind displacement — more bend at the tip (pos.y)
     float windX = sin(uTime * 1.5 + pos.x * uWindFrequency + instanceRandomOffset * 6.2832) * uWindStrength * pos.y;
     float windZ = cos(uTime * 1.2 + pos.z * uWindFrequency * 0.7 + instanceRandomOffset * 6.2832) * uWindStrength * 0.6 * pos.y;
 
     vec3 windOffset = vec3(windX, 0.0, windZ);
     vec3 displacedPos = pos + windOffset;
 
-    // Compute approximate normal rotation due to wind bending
-    // The blade normal is (0, 0, 1) originally. Wind bends it.
-    // Approximate tangent direction from wind gradient
-    float dWindXdY = sin(uTime * 1.5 + pos.x * uWindFrequency + instanceRandomOffset * 6.2832) * uWindStrength;
-    float dWindZdY = cos(uTime * 1.2 + pos.z * uWindFrequency * 0.7 + instanceRandomOffset * 6.2832) * uWindStrength * 0.6;
-
-    // Original normal (0, 0, 1), bent by wind gradient
-    vec3 bentNormal = normalize(vec3(-dWindXdY, 0.0, 1.0 - dWindZdY));
-    vNormal = normalize(normalMatrix * bentNormal);
-
-    // Final position
-    vec3 worldPos = instancePosition + displacedPos;
-    vec4 mvPosition = modelViewMatrix * vec4(worldPos, 1.0);
+    // Use instanceMatrix for the base position + rotation, instanceMatrix includes rotation so wind applies in local space
+    vec4 worldPos = instanceMatrix * vec4(displacedPos, 1.0);
+    vec4 mvPosition = viewMatrix * worldPos;
     gl_Position = projectionMatrix * mvPosition;
 
     vColor = instanceColor;
@@ -49,16 +37,21 @@ const vertexShader = `
 const fragmentShader = `
   varying vec3 vColor;
   varying float vHeight;
-  varying vec3 vNormal;
 
   void main() {
     // Tip coloring: darker base to lighter/yellower tip
-    vec3 baseColor = mix(vColor * 0.6, vColor * 1.3, vHeight);
+    vec3 darkBase = vColor * 0.5;
+    vec3 lightTip = vec3(
+      min(vColor.r * 1.5, 1.0),
+      min(vColor.g * 1.3, 1.0),
+      max(vColor.b * 0.8, 0.0)
+    );
+    vec3 baseColor = mix(darkBase, lightTip, pow(vHeight, 0.8));
 
     // Simple lighting: ambient + directional
     vec3 lightDir = normalize(vec3(0.5, 0.8, 0.3));
-    float diff = max(dot(vNormal, lightDir), 0.0);
-    float lighting = 0.3 + 0.7 * diff;
+    float diff = max(dot(normalize(vec3(0.0, 0.0, 1.0)), lightDir), 0.0);
+    float lighting = 0.35 + 0.65 * diff;
 
     vec3 finalColor = baseColor * lighting;
 
@@ -90,22 +83,21 @@ class GrassField {
     this.windFrequency = options.windFrequency ?? 0.5;
 
     this._createBladeGeometry();
-    this._createInstancedAttributes();
-    this._createMaterial();
-    this._createMesh();
+    this._createInstancedMesh();
   }
 
   _createBladeGeometry() {
-    const baseWidth = 0.025;
-    const topWidth = 0.005;
+    const baseWidth = 0.04;   // wider for better visibility
+    const topWidth = 0.008;
+    const height = 1.0;
     const halfBase = baseWidth / 2;
     const halfTop = topWidth / 2;
 
     const positions = new Float32Array([
       -halfBase, 0.0, 0.0,  // 0: bottom-left
        halfBase, 0.0, 0.0,  // 1: bottom-right
-       halfTop,  1.0, 0.0,  // 2: top-right
-      -halfTop,  1.0, 0.0,  // 3: top-left
+       halfTop,  height, 0.0, // 2: top-right
+      -halfTop,  height, 0.0, // 3: top-left
     ]);
 
     const indices = [
@@ -113,6 +105,7 @@ class GrassField {
       0, 2, 3,
     ];
 
+    // We'll handle normals in the shader — simpler and less error-prone
     const normals = new Float32Array([
       0, 0, 1,
       0, 0, 1,
@@ -120,34 +113,33 @@ class GrassField {
       0, 0, 1,
     ]);
 
-    const uvs = new Float32Array([
-      0, 0,
-      1, 0,
-      1, 1,
-      0, 1,
-    ]);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geometry.setIndex(indices);
 
-    this.geometry = new THREE.BufferGeometry();
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    this.geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    this.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-    this.geometry.setIndex(indices);
+    this.geometry = geometry;
   }
 
-  _createInstancedAttributes() {
+  _createInstancedMesh() {
     const instancePositions = new Float32Array(this.count * 3);
     const instanceRandomOffsets = new Float32Array(this.count);
     const instanceHeightScales = new Float32Array(this.count);
     const instanceColors = new Float32Array(this.count * 3);
 
+    const dummy = new THREE.Object3D();
+    const meshes = [];
+
     for (let i = 0; i < this.count; i++) {
       const i3 = i * 3;
-      instancePositions[i3]     = (Math.random() - 0.5) * this.areaSize;
+      const x = (Math.random() - 0.5) * this.areaSize;
+      const z = (Math.random() - 0.5) * this.areaSize;
+
+      instancePositions[i3]     = x;
       instancePositions[i3 + 1] = 0.0;
-      instancePositions[i3 + 2] = (Math.random() - 0.5) * this.areaSize;
+      instancePositions[i3 + 2] = z;
 
       instanceRandomOffsets[i] = Math.random();
-
       instanceHeightScales[i] = 0.7 + Math.random() * 0.6; // [0.7, 1.3]
 
       const hue = 100 + Math.random() * 40;        // 100-140
@@ -157,15 +149,17 @@ class GrassField {
       instanceColors[i3]     = r;
       instanceColors[i3 + 1] = g;
       instanceColors[i3 + 2] = b;
+
+      // Store per-instance data for matrix setup
+      meshes.push({ x, z, randomYaw: Math.random() * Math.PI * 2 });
     }
 
-    this.geometry.setAttribute('instancePosition', new THREE.InstancedBufferAttribute(instancePositions, 3));
+    // Add custom instanced attributes to the geometry
     this.geometry.setAttribute('instanceRandomOffset', new THREE.InstancedBufferAttribute(instanceRandomOffsets, 1));
     this.geometry.setAttribute('instanceHeightScale', new THREE.InstancedBufferAttribute(instanceHeightScales, 1));
     this.geometry.setAttribute('instanceColor', new THREE.InstancedBufferAttribute(instanceColors, 3));
-  }
 
-  _createMaterial() {
+    // Create material
     this.material = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
@@ -176,12 +170,23 @@ class GrassField {
       fragmentShader,
       side: THREE.DoubleSide,
     });
-  }
 
-  _createMesh() {
-    this.mesh = new THREE.Mesh(this.geometry, this.material);
-    this.mesh.frustumCulled = false;
-    this.mesh.instanceCount = this.count;
+    // Create InstancedMesh — the canonical Three.js way
+    const mesh = new THREE.InstancedMesh(this.geometry, this.material, this.count);
+    mesh.frustumCulled = false;
+
+    // Set instance matrices with position + random yaw rotation
+    for (let i = 0; i < this.count; i++) {
+      const m = meshes[i];
+      dummy.position.set(m.x, 0, m.z);
+      dummy.rotation.set(0, m.randomYaw, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+
+    this.mesh = mesh;
   }
 
   updateTime(time) {
@@ -190,6 +195,10 @@ class GrassField {
 
   setWindStrength(value) {
     this.material.uniforms.uWindStrength.value = value;
+  }
+
+  setWindFrequency(value) {
+    this.material.uniforms.uWindFrequency.value = value;
   }
 
   dispose() {
