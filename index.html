@@ -74,19 +74,12 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-// ── Ground ────────────────────────────────────────────────────
-const noise = new PerlinNoise(137);
-const GSEG = 32;
-const groundG = new THREE.PlaneGeometry(FIELD_SIZE + 6, FIELD_SIZE + 6, GSEG, GSEG);
-groundG.rotateX(-Math.PI / 2);
-const gP = groundG.attributes.position.array;
-const gC = new Float32Array(gP.length);
-for (let i = 0; i < gP.length / 3; i++) {
-  const [r, g, b] = botwColor(noise.fbm(gP[i*3] * 0.06, gP[i*3+2] * 0.06) * 0.8);
-  gC[i*3] = r; gC[i*3+1] = g; gC[i*3+2] = b;
-}
-groundG.setAttribute('color', new THREE.BufferAttribute(gC, 3));
-const ground = new THREE.Mesh(groundG, new THREE.MeshBasicMaterial({ vertexColors: THREE.VertexColors, side: THREE.DoubleSide }));
+// ── Ground (solid color, no vertex colors) ────────────────────
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(FIELD_SIZE + 6, FIELD_SIZE + 6),
+  new THREE.MeshBasicMaterial({ color: 0x5a7a47, side: THREE.DoubleSide })
+);
+ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.05;
 scene.add(ground);
 
@@ -121,8 +114,7 @@ for (let i = 0; i < BLADE_COUNT; i++) {
     const pi = (bi + j) * 3;
     pos[pi] = wx; pos[pi+1] = ly; pos[pi+2] = wz;
     const t = ly / h;
-    const rgb = t > 0.5 ? tipRGB : baseRGB;
-    col[pi] = rgb[0]; col[pi+1] = rgb[1]; col[pi+2] = rgb[2];
+    col[pi] = baseRGB[0]; col[pi+1] = baseRGB[1]; col[pi+2] = baseRGB[2];
     windPhaseArr[bi + j] = windPhase + windPhase2 * 0.3;
   }
 }
@@ -194,10 +186,8 @@ const vertSrc = `
 
 const fragSrc = `
   varying vec3 vColor;
-  varying float vNormH;
   void main() {
-    vec3 base = mix(vColor, vColor * 1.25, pow(vNormH, 1.5));
-    gl_FragColor = vec4(base, 1.0);
+    gl_FragColor = vec4(vColor, 1.0);
   }
 `;
 
