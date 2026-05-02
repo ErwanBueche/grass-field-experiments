@@ -10,10 +10,8 @@
     canvas { display: block; }
     #info {
       position: fixed; top: 12px; left: 12px;
-      font: 12px/1.6 Consolas, monospace;
-      color: rgba(255,255,255,0.6);
-      background: rgba(0,0,0,0.3);
-      padding: 8px 12px; border-radius: 6px;
+      font: 12px/1.6 Consolas, monospace; color: rgba(255,255,255,0.6);
+      background: rgba(0,0,0,0.3); padding: 8px 12px; border-radius: 6px;
       pointer-events: none; user-select: none; z-index: 10;
     }
   </style>
@@ -25,35 +23,21 @@
   <script>
 // ── Perlin Noise ──────────────────────────────────────────────
 function PerlinNoise(seed) {
-  const P = new Uint8Array(512);
-  const p = new Uint8Array(256);
+  const P = new Uint8Array(512), p = new Uint8Array(256);
   for (let i = 0; i < 256; i++) p[i] = i;
   let s = seed;
-  for (let i = 255; i > 0; i--) {
-    s = (s * 16807) % 2147483647;
-    const j = s % (i + 1);
-    [p[i], p[j]] = [p[j], p[i]];
-  }
+  for (let i = 255; i > 0; i--) { s = (s * 16807) % 2147483647; const j = s % (i + 1); [p[i], p[j]] = [p[j], p[i]]; }
   for (let i = 0; i < 512; i++) P[i] = p[i & 255];
   function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
   function lerp(a, b, t) { return a + t * (b - a); }
-  function grad(h, x, y) {
-    const hh = h & 3;
-    const u = hh < 2 ? x : y, v = hh < 2 ? y : x;
-    return ((hh & 1) === 0 ? u : -u) + ((hh & 2) === 0 ? v : -v);
-  }
+  function grad(h, x, y) { const hh = h & 3; const u = hh < 2 ? x : y, v = hh < 2 ? y : x; return ((hh & 1) === 0 ? u : -u) + ((hh & 2) === 0 ? v : -v); }
   this.n = function(x, y) {
     const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
     const xf = x - Math.floor(x), yf = y - Math.floor(y);
     const u = fade(xf), v = fade(yf);
-    return lerp(lerp(grad(P[P[X] + Y], xf, yf), grad(P[P[X] + 1 + Y], xf - 1, yf), u),
-                lerp(grad(P[P[X] + Y + 1], xf, yf - 1), grad(P[P[X] + 1 + Y + 1], xf - 1, yf - 1), u), v);
+    return lerp(lerp(grad(P[P[X] + Y], xf, yf), grad(P[P[X] + 1 + Y], xf - 1, yf), u), lerp(grad(P[P[X] + Y + 1], xf, yf - 1), grad(P[P[X] + 1 + Y + 1], xf - 1, yf - 1), u), v);
   };
-  this.fbm = function(x, y) {
-    let v = 0, a = 0.5, f = 1;
-    for (let i = 0; i < 3; i++) { v += a * this.n(x * f, y * f); f *= 2; a *= 0.5; }
-    return v;
-  };
+  this.fbm = function(x, y) { let v = 0, a = 0.5, f = 1; for (let i = 0; i < 3; i++) { v += a * this.n(x * f, y * f); f *= 2; a *= 0.5; } return v; };
 }
 
 function botwColor(nv) {
@@ -75,11 +59,9 @@ function botwColor(nv) {
 // ── Config ────────────────────────────────────────────────────
 const BLADE_COUNT = 200000;
 const FIELD_SIZE = 50;
-
-// Fluffy grass: wider blades, shorter height
 const BLADE_HEIGHT = 0.55;
 const BASE_WIDTH = 0.06;
-const TOP_WIDTH = 0.003;   // very pointy tip
+const TOP_WIDTH = 0.003;
 
 // ── Scene ────────────────────────────────────────────────────
 const scene = new THREE.Scene();
@@ -110,28 +92,26 @@ scene.add(ground);
 
 // ── Build Grass ──────────────────────────────────────────────
 console.log('Building', BLADE_COUNT, 'blades...');
-
 const hb = BASE_WIDTH / 2, ht = TOP_WIDTH / 2;
 const V = 6, N = BLADE_COUNT * V;
 const pos = new Float32Array(N * 3);
 const col = new Float32Array(N * 3);
 const to = [0, 1, 2, 0, 2, 3];
 
+// Store per-blade base XZ for wind phase
+const windPhaseArr = new Float32Array(N);
+
 for (let i = 0; i < BLADE_COUNT; i++) {
   const x = (Math.random() - 0.5) * FIELD_SIZE;
   const z = (Math.random() - 0.5) * FIELD_SIZE;
   const yaw = Math.random() * Math.PI * 2;
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
-  const h = BLADE_HEIGHT * (0.7 + Math.random() * 0.5); // less height variation
-
-  // Fluffy tip: wider top means less taper
+  const h = BLADE_HEIGHT * (0.7 + Math.random() * 0.5);
   const nv = noise.fbm(x * 0.06, z * 0.06);
   const baseRGB = botwColor(nv);
-  const tipRGB = [
-    Math.min(baseRGB[0] * 1.3, 1),
-    Math.min(baseRGB[1] * 1.2, 1),
-    Math.max(baseRGB[2] * 0.85, 0)
-  ];
+  const tipRGB = [Math.min(baseRGB[0] * 1.25, 1), Math.min(baseRGB[1] * 1.2, 1), baseRGB[2] * 0.85];
+  const windPhase = Math.random();
+  const windPhase2 = Math.random();
 
   const verts = [[-hb, 0], [hb, 0], [ht, h], [-ht, h]];
   const bi = i * V;
@@ -143,17 +123,20 @@ for (let i = 0; i < BLADE_COUNT; i++) {
     const t = ly / h;
     const rgb = t > 0.5 ? tipRGB : baseRGB;
     col[pi] = rgb[0]; col[pi+1] = rgb[1]; col[pi+2] = rgb[2];
+    windPhaseArr[bi + j] = windPhase + windPhase2 * 0.3;
   }
 }
 
-// ── Geometry with custom attributes for wind ─────────────────
 const geo = new THREE.BufferGeometry();
 geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
 geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+geo.setAttribute('windPhase', new THREE.BufferAttribute(windPhaseArr, 1));
 
-// ── Vertex Shader with wind (computed from position, no custom attr) ──
+// ── Vertex Shader — improved BOTW wind ────────────────────────
+// Technique: traveling gust waves + turbulence + spring-like recovery
 const vertSrc = `
   attribute vec3 color;
+  attribute float windPhase;
   uniform float uTime;
   varying vec3 vColor;
   varying float vNormH;
@@ -162,18 +145,44 @@ const vertSrc = `
     vec3 p = position;
     float h = clamp(p.y / 0.8, 0.0, 1.0);
 
-    // Wind phase derived from position (no custom attribute needed)
-    float phase = sin(p.x * 3.7 + p.z * 5.1) * 0.5 + 0.5;
-    float phase2 = sin(p.x * 7.3 + p.z * 11.7) * 0.5 + 0.5;
+    // ── Traveling gust system ─────────────────────────────────
+    // The gust moves across the field in a direction (gustDir)
+    // As it passes, blades bend, then recover naturally.
 
-    // BOTW wind: gentle billowing waves
-    float w1 = sin(uTime * 1.3 + p.x * 0.06 + p.z * 0.04 + phase * 6.2832);
-    float w2 = sin(uTime * 0.9 + p.x * 0.18 + p.z * 0.12 + phase2 * 6.2832) * 0.4;
-    float wind = (w1 * 0.8 + w2) * 0.4 * h * h; // tip-weighted
+    // Primary gust: travels in +X direction
+    float gustSpeed = 1.3;
+    float gustTravel = uTime * gustSpeed - p.x * 0.06 - p.z * 0.03;
+    float gustEnv = sin(gustTravel + windPhase * 1.5) * 0.5 + 0.5; // 0-1 pulse
+    gustEnv = gustEnv * gustEnv; // Sharper pulse, like a gust hitting
+
+    // Secondary gust: slower, different direction
+    float gustTravel2 = uTime * 0.7 - p.x * 0.02 + p.z * 0.05;
+    float gustEnv2 = sin(gustTravel2 + windPhase * 2.3) * 0.5 + 0.5;
+    gustEnv2 = gustEnv2 * gustEnv2;
+
+    // Combine gusts with different strengths
+    float gust = gustEnv * 0.7 + gustEnv2 * 0.3;
+
+    // ── Turbulence (high-freq detail on top of gusts) ─────────
+    float turb = sin(uTime * 2.1 + p.x * 0.5 + p.z * 0.4 + windPhase * 4.0) * 0.12;
+    float turb2 = sin(uTime * 3.7 + p.x * 0.9 + p.z * 0.7 + windPhase * 7.0) * 0.06;
+
+    // ── Wind strength with slow modulation ────────────────────
+    // Creates calmer and windier moments
+    float windIntensity = 0.35 * (0.6 + 0.4 * sin(uTime * 0.2 + p.x * 0.01));
+
+    // ── Combine ───────────────────────────────────────────────
+    float wind = (gust + turb + turb2) * windIntensity * h * h;
+
+    // ── Wind direction (slightly varies across field) ─────────
+    // Primary direction is +X, slight variation in Z
+    float dirVariation = sin(p.x * 0.03 + p.z * 0.02 + windPhase * 2.0) * 0.2;
+    float dirX = 0.85;
+    float dirZ = 0.15 + dirVariation;
 
     vec3 disp = p;
-    disp.x += wind * 0.6;
-    disp.z += wind * 0.3;
+    disp.x += wind * dirX;
+    disp.z += wind * dirZ;
 
     vec4 mv = modelViewMatrix * vec4(disp, 1.0);
     gl_Position = projectionMatrix * mv;
@@ -186,7 +195,6 @@ const vertSrc = `
 const fragSrc = `
   varying vec3 vColor;
   varying float vNormH;
-
   void main() {
     vec3 base = mix(vColor, vColor * 1.25, pow(vNormH, 1.5));
     gl_FragColor = vec4(base, 1.0);
@@ -205,10 +213,8 @@ mesh.frustumCulled = false;
 scene.add(mesh);
 console.log('Done:', BLADE_COUNT, 'blades');
 
-// ── Fog ────────────────────────────────────────────────────────
 scene.fog = new THREE.Fog(0x7EC8E3, 30, 75);
 
-// ── Animation ──────────────────────────────────────────────────
 const fpsEl = document.getElementById('fps');
 let fc = 0, ft = 0, prev = performance.now();
 function tick() {
